@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lab P2 – Calibrazione strumenti</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mu:#666;--bd:#d0d0d0;--ac:#1a5fb4;--ok:#1b7a3a;--ko:#b3261e;--sf:#f4f5f7}
+@media(prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e8e8e8;--mu:#9aa;--bd:#3a3f47;--ac:#6ea8fe;--ok:#5fd38a;--ko:#ff8a80;--sf:#1f2227}}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg);padding:8px;max-width:1100px;margin:auto}
+h1{font-size:18px;margin:6px 0}h3{font-size:15px;margin:14px 0 6px}
+nav{display:flex;flex-wrap:wrap;gap:4px;position:sticky;top:0;background:var(--bg);padding:4px 0;z-index:5}
+button{font:inherit;border:1px solid var(--bd);background:var(--sf);color:var(--fg);padding:4px 10px;border-radius:5px;cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+input,textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--bd);border-radius:4px;padding:3px 5px;width:100%}
+textarea{font-family:ui-monospace,monospace}
+table{border-collapse:collapse;width:100%;margin:4px 0}th,td{border:1px solid var(--bd);padding:2px 4px;text-align:left}
+th{background:var(--sf);font-weight:600}td input{border:0;padding:2px}
+.pr{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:6px}.pr label{font-size:12px;color:var(--mu)}
+.ok{color:var(--ok);font-weight:600}.ko{color:var(--ko);font-weight:600}.mu{color:var(--mu);font-size:12px}
+section{display:none}section.v{display:block}.rt td:nth-child(n+2){font-variant-numeric:tabular-nums}
+.sc{overflow-x:auto}.bar{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+@media print{nav,.bar,button{display:none}}
+</style></head><body>
+<h1>P2 – Calibrazione strumenti · costante di tempo, Boyle, tenuta</h1>
+<nav id="nav"></nav><div id="app"></div>
+<script>
+const n=v=>{const x=parseFloat(String(v).replace(',','.'));return isFinite(x)?x:NaN};
+/* ---------- FORMULE (modificabili) ---------- */
+const ARGS={ylin:['T','T0','Tinf'],sylin:['T','Tinf','sT'],tau:['b'],stau:['b','sb'],model:['t','T0','Tinf','tau'],chi:['y','m','s'],
+x:['dV','V0'],sx:['dV','sdV','V0','sV0'],y:['dp','p0'],sy:['dp','sdp','p0','sp0'],dpl:['m','g','S'],sdpl:['dp','m','sm','S','sS'],
+beta:['alpha','S'],sbeta:['alpha','salpha','S','sS'],z:['v','s','e','se']};
+const DF={ylin:'Math.log((Tinf-T)/(Tinf-T0))',sylin:'sT/Math.abs(Tinf-T)',tau:'-1/b',stau:'sb/(b*b)',model:'Tinf-(Tinf-T0)*Math.exp(-t/tau)',chi:'((y-m)/s)**2',
+x:'dV/V0',sx:'Math.hypot(sdV/V0, dV*sV0/(V0*V0))',y:'dp/p0',sy:'Math.hypot(sdp/p0, dp*sp0/(p0*p0))',dpl:'0.01*m*g/S',sdpl:'dp*Math.hypot(sm/m, sS/S)',
+beta:'alpha*S',sbeta:'Math.hypot(salpha*S, alpha*sS)',z:'(v-e)/Math.hypot(s,se)'};
+const DS={ylin:'T(t)=T̄−(T̄−T0)e^(−t/τ) ⇒ y=ln[(T̄−T)/(T̄−T0)] = −t/τ (eq.1 linearizzata)',sylin:'σ_y = σ_T/|T̄−T|',tau:'τ = −1/b (b = pendenza di y vs t)',stau:'σ_τ = σ_b/b²',
+model:'modello per il posterior su τ (T0, T̄ fissi)',chi:'termine del χ² = ((y−modello)/σ)² (sommato sui punti)',x:'x = ΔV/V0 (eq.4)',sx:'σ_x (propagazione su ΔV, V0)',y:'y = Δp/p0 (eq.4)',
+sy:'σ_y (propagazione su Δp, p0)',dpl:'Δp = m·g/S [kPa] (m in g, S in cm², g in m/s²)',sdpl:'σ_Δp (propagazione su m, S)',beta:'β = α·S [cm³/min]',sbeta:'σ_β',z:'z = (valore − atteso)/√(σ² + σ_att²)'};
+const comp={};
+function F(k,o){const c=comp[k]||(comp[k]=new Function(...ARGS[k],'return '+st.F[k]));return c(...ARGS[k].map(a=>o[a]))}
+/* ---------- STATISTICA ---------- */
+function lg(x){const c=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,.1208650973866179e-2,-.5395239384953e-5];let y=x,t=x+5.5;t-=(x+.5)*Math.log(t);let s=1.000000000190015;for(const k of c)s+=k/++y;return -t+Math.log(2.5066282746310005*s/x)}
+function gq(a,x){if(x<=0)return 1;if(x<a+1){let s=1/a,d=s,m=a;for(let i=0;i<300;i++){m++;d*=x/m;s+=d;if(Math.abs(d)<Math.abs(s)*1e-12)break}return 1-s*Math.exp(-x+a*Math.log(x)-lg(a))}
+let b=x+1-a,c=1e300,d=1/b,h=d;for(let i=1;i<300;i++){const an=-i*(i-a);b+=2;d=an*d+b;if(Math.abs(d)<1e-300)d=1e-300;c=b+an/c;if(Math.abs(c)<1e-300)c=1e-300;d=1/d;const dl=d*c;h*=dl;if(Math.abs(dl-1)<1e-12)break}return Math.exp(-x+a*Math.log(x)-lg(a))*h}
+const pval=(chi,nd)=>nd>0?gq(nd/2,chi/2):NaN;
+function wls(x,y,s,o){const uw=s.some(v=>!(v>0));if(uw)s=s.map(()=>1);let S=0,Sx=0,Sy=0,Sxx=0,Sxy=0;
+x.forEach((xi,i)=>{const w=1/s[i]**2;S+=w;Sx+=w*xi;Sy+=w*y[i];Sxx+=w*xi*xi;Sxy+=w*xi*y[i]});
+let a=0,b,sa=0,sb;if(o){b=Sxy/Sxx;sb=1/Math.sqrt(Sxx)}else{const D=S*Sxx-Sx*Sx;a=(Sxx*Sy-Sx*Sxy)/D;b=(S*Sxy-Sx*Sy)/D;sa=Math.sqrt(Sxx/D);sb=Math.sqrt(S/D)}
+const chi=x.reduce((c,xi,i)=>c+F('chi',{y:y[i],m:a+b*xi,s:s[i]}),0),nd=x.length-(o?1:2);
+if(uw&&nd>0){const k=Math.sqrt(chi/nd);sa*=k;sb*=k}return{a,b,sa,sb,chi:uw?NaN:chi,nd,uw}}
+function eff(x,y,sx,sy,o){let b=0,f;for(let i=0;i<6;i++){f=wls(x,y,sy.map((v,j)=>Math.hypot(v,b*sx[j])),o);b=f.b}return f}
+function ms(v){const N=v.length;if(!N)return null;const m=v.reduce((a,b)=>a+b,0)/N,va=N>1?v.reduce((a,b)=>a+(b-m)**2,0)/(N-1):NaN;return{N,m,va,sd:Math.sqrt(va),sem:Math.sqrt(va/N)}}
+function fmt(v,s){if(!isFinite(v))return['—',''];if(!(s>0)||!isFinite(s))return[(+v.toPrecision(4)).toString(),''];
+const e=Math.floor(Math.log10(s)),E=v?Math.floor(Math.log10(Math.abs(v))):e;return[v.toPrecision(Math.min(100,Math.max(1,E-e+2))),s.toPrecision(2)]}
+const g4=v=>isFinite(v)?(+v.toPrecision(4)).toString():'—';
+/* ---------- CONFIG SEZIONI ---------- */
+const THP=[['T0','T0 (°C)'],['Tinf','T̄ (°C)'],['sT','σ_T (°C)'],['exp','τ attesa (s)'],['sexp','σ τ att.']];
+const BOP=[['V0','V0 (cm³)'],['sV0','σ_V0 (cm³)'],['p0','p0 (kPa)'],['sp0','σ_p0 (kPa)'],['exp','pend. attesa'],['sexp','σ att.']];
+const LKP=[['S','S (cm²)'],['sS','σ_S (cm²)'],['g','g (m/s²)'],['exp','ω atteso'],['sexp','σ ω att.']];
+const TC=['t (s)','T (°C)'],BC=['ΔV (cm³)','σ_ΔV (cm³)','Δp (kPa)','σ_Δp (kPa)'],LC=['m (g)','σ_m (g)','α (cm/min)','σ_α (cm/min)'];
+const SEC={
+th1:{tab:'th',ty:'th',sh:'Term.1',t:'Termometro run 1: thermos 60 °C → thermos ambiente',cols:TC,req:[0,1],sg:[],par:THP,dp:{T0:60,Tinf:25,sT:0.05}},
+th2:{tab:'th',ty:'th',sh:'Term.2',t:'Termometro run 2: thermos 60 °C → aria',cols:TC,req:[0,1],sg:[],par:THP,dp:{T0:60,Tinf:25,sT:0.05}},
+bo1:{tab:'bo',ty:'bo',sh:'Boyle 1',t:'Boyle run 1: Δp/p0 vs ΔV/V0',cols:BC,req:[0,2],sg:[1,3],par:BOP,dp:{V0:1111,sV0:5,p0:101.3,sp0:0.1,exp:-1,sexp:0}},
+bo2:{tab:'bo',ty:'bo',sh:'Boyle 2',t:'Boyle run 2 (ripetizione)',cols:BC,req:[0,2],sg:[1,3],par:BOP,dp:{V0:1111,sV0:5,p0:101.3,sp0:0.1,exp:-1,sexp:0}},
+lk1:{tab:'lk',ty:'lk',sh:'Tenuta 1',t:'Tenuta: solo cilindro-pistone',cols:LC,req:[0,2],sg:[1,3],par:LKP,dp:{g:9.81}},
+lk2:{tab:'lk',ty:'lk',sh:'Tenuta 2',t:'Tenuta: cilindro-pistone + cilindro metallo',cols:LC,req:[0,2],sg:[1,3],par:LKP,dp:{g:9.81}}};
+const TABS={th:'Termometro',bo:'Boyle',lk:'Tenuta',gr:'Gruppi / Totale',fo:'Formule',rs:'Riepilogo / Export'};
+function init(){const s={F:{...DF},gr:[{name:'Gruppo 1',txt:''}],ge:'',gse:''};
+for(const id in SEC){s[id]={p:{...SEC[id].dp},rows:Array.from({length:8},()=>SEC[id].cols.map(()=>''))}}return s}
+let st=init(),R={},tab='th';
+try{const sv=JSON.parse(localStorage.getItem('p2'));if(sv)st=Object.assign(init(),sv,{F:{...DF,...(sv.F||{})}})}catch(e){}
+const save=()=>{try{localStorage.setItem('p2',JSON.stringify(st))}catch(e){}};
+/* ---------- RENDER ---------- */
+const rowH=(id,i)=>`<tr>${st[id].rows[i].map((v,j)=>`<td><input data-id="${id}" data-i="${i}" data-j="${j}" value="${v}" inputmode="decimal"></td>`).join('')}</tr>`;
+function secH(id){const c=SEC[id],s=st[id];return`<section data-tab="${c.tab}"><h3>${c.t}</h3><div class="pr">${c.par.map(([k,l])=>`<label>${l}<input data-id="${id}" data-p="${k}" value="${s.p[k]??''}"></label>`).join('')}<label><input type="checkbox" style="width:auto" data-id="${id}" data-p="o" ${s.p.o?'checked':''}> retta per l'origine</label></div>
+<div class="sc"><table><thead><tr>${c.cols.map(x=>`<th>${x}`).join('')}</tr></thead><tbody id="tb-${id}">${s.rows.map((_,i)=>rowH(id,i)).join('')}</tbody></table></div>
+<div class="bar"><button data-add="${id}">+ riga</button><button data-clr="${id}">svuota</button></div><div id="r-${id}" class="sc"></div></section>`}
+function render(){$nav.innerHTML=Object.entries(TABS).map(([k,l])=>`<button data-tab="${k}" class="${k==tab?'on':''}">${l}</button>`).join('');
+let h=Object.keys(SEC).map(secH).join('');
+h+=`<section data-tab="gr"><h3>Gruppi di misure (una per riga: <code>valore ; σ</code>, σ opzionale)</h3><div class="pr"><label>Valore atteso<input data-ge="e" value="${st.ge}"></label><label>σ atteso<input data-ge="s" value="${st.gse}"></label></div><div id="grs"></div><div class="bar"><button id="addg">+ gruppo</button></div><div id="r-gr" class="sc"></div></section>`;
+h+=`<section data-tab="fo"><h3>Formule (JavaScript, modificabili)</h3><p class="mu">Variabili disponibili tra parentesi. Usa Math.log, Math.hypot, **, ecc.</p><div id="fo"></div><div class="bar"><button id="rf">ripristina tutte</button></div></section>`;
+h+=`<section data-tab="rs"><h3>Riepilogo</h3><div class="bar"><button id="cp">copia TSV</button><button id="dl">scarica CSV</button><button id="sj">salva JSON</button><button id="lj">carica JSON</button><button onclick="print()">stampa</button><button id="rst">azzera tutto</button></div><div id="r-rs" class="sc"></div></section>`;
+$app.innerHTML=h;renderG();renderF();vis();calc()}
+function renderG(){$('#grs').innerHTML=st.gr.map((g,i)=>`<div style="margin:6px 0"><input data-gn="${i}" value="${g.name}" style="width:60%"> <button data-gd="${i}">✕</button><textarea rows="4" data-gt="${i}">${g.txt}</textarea></div>`).join('')}
+function renderF(){$('#fo').innerHTML=Object.keys(DF).map(k=>`<div style="margin:5px 0"><div class="mu"><b>${k}</b>(${ARGS[k].join(', ')}) — ${DS[k]}</div><input data-f="${k}" value="${st.F[k].replace(/"/g,'&quot;')}"></div>`).join('')}
+function vis(){document.querySelectorAll('section').forEach(s=>s.classList.toggle('v',s.dataset.tab==tab));document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab==tab))}
+/* ---------- CALCOLO ---------- */
+const resT=(res,exNote)=>`<table class="rt"><thead><tr><th>Grandezza<th>Valore<th>± σ<th>Atteso<th>± σ att.<th>z<th>χ²/ndof<th>p</tr></thead>${res.map(r=>{const[v,s]=fmt(r.v,r.s);const z=r.e!==undefined&&isFinite(r.e)?F('z',{v:r.v,s:r.s||0,e:r.e,se:r.se||0}):NaN;r.z=z;
+const zc=isFinite(z)?(Math.abs(z)<=2?'ok':'ko'):'';const p=pval(r.chi,r.nd);r.p=p;return`<tr><td>${r.n}<td>${v}<td>${s}<td>${isFinite(r.e)?g4(r.e):''}<td>${r.se>0?g4(r.se):''}<td class="${zc}">${isFinite(z)?z.toFixed(2):''}<td>${isFinite(r.chi)?g4(r.chi)+'/'+r.nd:''}<td>${isFinite(p)?p.toFixed(3):''}</tr>`}).join('')}</table>`;
+const stT=(cols,vals)=>`<table class="rt"><thead><tr><th>Colonna<th>N<th>media<th>varianza<th>σ (dev.std)<th>σ_media</tr></thead>${cols.map((c,j)=>{const m=ms(vals[j]);return m?`<tr><td>${c}<td>${m.N}<td>${g4(m.m)}<td>${g4(m.va)}<td>${g4(m.sd)}<td>${g4(m.sem)}</tr>`:''}).join('')}</table>`;
+function calc(){R={};for(const id in SEC){const c=SEC[id],s=st[id],P={};for(const k in s.p)P[k]=k=='o'?s.p[k]:n(s.p[k]);const el=$('#r-'+id);
+try{let rows=s.rows.map(r=>r.map(n)).filter(r=>c.req.every(j=>!isNaN(r[j]))).map(r=>r.map((v,j)=>isNaN(v)&&c.sg.includes(j)?0:v));
+const cols=c.cols.map((_,j)=>rows.map(r=>r[j]));const sc=c.cols.map((_,j)=>c.sg.includes(j)?[]:cols[j]);let res=[];
+if(rows.length<3){el.innerHTML='<span class="mu">servono ≥3 righe valide</span>';continue}
+if(c.ty=='th'){const t=[],y=[],sy=[];rows.forEach(([tt,T])=>{const yy=F('ylin',{T,T0:P.T0,Tinf:P.Tinf});if(isFinite(yy)){t.push(tt);y.push(yy);sy.push(F('sylin',{T,Tinf:P.Tinf,sT:P.sT}))}});
+if(t.length<3){el.innerHTML='<span class="ko">punti non validi per ln (controlla T0, T̄)</span>';continue}
+const f=wls(t,y,sy,P.o),tau=F('tau',{b:f.b}),st_=F('stau',{b:f.b,sb:f.sb});
+const T0=P.T0,Ti=P.Tinf,lo=(isFinite(tau)&&tau>0?tau:10)/4,N=600,L=[],G=[];
+for(let i=0;i<N;i++){const ta=lo*(1+15*i/(N-1));let ch=0;for(const r of rows)ch+=F('chi',{y:r[1],m:F('model',{t:r[0],T0,Tinf:Ti,tau:ta}),s:P.sT});G.push(ta);L.push(ch)}
+const mn=Math.min(...L),w=L.map(v=>Math.exp(-(v-mn)/2)),W=w.reduce((a,b)=>a+b,0),pm=w.reduce((a,b,i)=>a+b*G[i],0)/W,ps=Math.sqrt(w.reduce((a,b,i)=>a+b*(G[i]-pm)**2,0)/W),mo=G[L.indexOf(mn)];
+const ex=P.exp,se=P.sexp;
+res=[{n:'b (1/s)',v:f.b,s:f.sb},{n:'a (intercetta)',v:f.a,s:f.sa},{n:'τ lineariz. (s)',v:tau,s:st_,e:ex,se,chi:f.chi,nd:f.nd,m:1},{n:'τ posterior media (s)',v:pm,s:ps,e:ex,se,chi:mn,nd:rows.length-1,m:2},{n:'τ posterior moda (s)',v:mo,s:ps}];
+if(Math.abs(mo-G[0])<1e-9||Math.abs(mo-G[N-1])<1e-9)res.push({n:'⚠ moda al bordo griglia',v:NaN})}
+else{let x,y,sx,sy,f,nm,u;
+if(c.ty=='bo'){x=rows.map(r=>F('x',{dV:r[0],V0:P.V0}));sx=rows.map(r=>F('sx',{dV:r[0],sdV:r[1],V0:P.V0,sV0:P.sV0}));y=rows.map(r=>F('y',{dp:r[2],p0:P.p0}));sy=rows.map(r=>F('sy',{dp:r[2],sdp:r[3],p0:P.p0,sp0:P.sp0}));nm='pendenza Δp/p0 vs ΔV/V0';u=''}
+else{const dp=rows.map(r=>F('dpl',{m:r[0],g:P.g,S:P.S}));x=dp;sx=rows.map((r,i)=>F('sdpl',{dp:dp[i],m:r[0],sm:r[1],S:P.S,sS:P.sS}));y=rows.map(r=>F('beta',{alpha:r[2],S:P.S}));sy=rows.map(r=>F('sbeta',{alpha:r[2],salpha:r[3],S:P.S,sS:P.sS}));nm='ω (cm³/kPa/min)';u='';
+rows.forEach((r,i)=>{r.push(dp[i],sx[i],y[i],sy[i])});c.cols2=['Δp (kPa)','σ_Δp','β (cm³/min)','σ_β'];cols.push(...[4,5,6,7].map(j=>rows.map(r=>r[j])));sc.push(cols[4],[],cols[6],[])}
+f=eff(x,y,sx,sy,P.o);res=[{n:nm,v:f.b,s:f.sb,e:isFinite(P.exp)?P.exp:undefined,se:P.sexp,chi:f.chi,nd:f.nd,m:1},{n:'intercetta',v:f.a,s:f.sa}];if(f.uw)res.push({n:'⚠ σ nulle: fit non pesato, σ da scarto',v:NaN})}
+R[id]=res;const names=c.cols.concat(c.cols2||[]);el.innerHTML=resT(res)+stT(names,sc)}catch(e){el.innerHTML='<span class="ko">Errore: '+e.message+'</span>'}}
+grp();summ()}
+function parseG(t){return t.split('\n').map(l=>l.trim().replace(/,/g,'.').split(/[;\t ]+/).map(parseFloat)).filter(a=>isFinite(a[0]))}
+function grp(){const E=n(st.ge),SE=n(st.gse)||0,all=[],rows=[];const one=(nm,d)=>{const v=d.map(a=>a[0]),m=ms(v);if(!m)return;const sg=d.every(a=>a[1]>0);let wm=NaN,sw=NaN,chi=NaN;
+if(sg){const w=d.map(a=>1/a[1]**2),W=w.reduce((a,b)=>a+b,0);wm=d.reduce((a,b,i)=>a+w[i]*b[0],0)/W;sw=1/Math.sqrt(W);chi=d.reduce((a,b)=>a+((b[0]-wm)/b[1])**2,0)}
+const zs=isFinite(E)?(m.m-E)/Math.hypot(m.sem||0,SE):NaN,zw=isFinite(E)&&sg?(wm-E)/Math.hypot(sw,SE):NaN;rows.push({nm,m,wm,sw,chi,nd:m.N-1,zs,zw})};
+st.gr.forEach(g=>{const d=parseG(g.txt);all.push(...d);one(g.name,d)});if(st.gr.length>1)one('TOTALE',all);
+const zf=z=>isFinite(z)?`<td class="${Math.abs(z)<=2?'ok':'ko'}">${z.toFixed(2)}`:'<td>';R.gr=rows;
+$('#r-gr').innerHTML=`<table class="rt"><thead><tr><th>Gruppo<th>N<th>media<th>varianza<th>σ<th>σ_media<th>media pesata<th>± σ_w<th>χ²/ndof<th>p<th>z (media)<th>z (pesata)</tr></thead>${rows.map(r=>`<tr><td>${r.nm}<td>${r.m.N}<td>${g4(r.m.m)}<td>${g4(r.m.va)}<td>${g4(r.m.sd)}<td>${g4(r.m.sem)}<td>${g4(r.wm)}<td>${g4(r.sw)}<td>${isFinite(r.chi)?g4(r.chi)+'/'+r.nd:''}<td>${isFinite(r.chi)?pval(r.chi,r.nd).toFixed(3):''}${zf(r.zs)}${zf(r.zw)}</tr>`).join('')}</table>`}
+function summ(){const L=[];for(const id in R)if(id!='gr')R[id].forEach(r=>{if(r.m)L.push({n:SEC[id].sh+' · '+r.n,...r})});
+[['th1','th2'],['bo1','bo2'],['lk1','lk2']].forEach(([a,b])=>{const A=R[a]&&R[a].find(r=>r.m==1),B=R[b]&&R[b].find(r=>r.m==1);if(!A||!B||!(A.s>0)||!(B.s>0))return;
+const wa=1/A.s**2,wb=1/B.s**2,sw=1/Math.sqrt(wa+wb),d=A.v-B.v,sd=Math.hypot(A.s,B.s);
+L.push({n:`${SEC[a].sh}+${SEC[b].sh} · media pesata`,v:(A.v*wa+B.v*wb)*sw*sw,s:sw,chi:d*d/(sd*sd),nd:1});L.push({n:`${SEC[a].sh} − ${SEC[b].sh} · differenza`,v:d,s:sd,e:0,se:0})});
+(R.gr||[]).forEach(r=>L.push({n:'Gruppo '+r.nm+' · media',v:r.m.m,s:r.m.sem,e:n(st.ge),se:n(st.gse)||0,chi:r.chi,nd:r.nd}));
+window.LST=L;$('#r-rs').innerHTML=resT(L)}
+function tsv(sep){const h=['Grandezza','Valore','sigma','Atteso','sigma_att','z','chi2','ndof','p'];return[h,...LST.map(r=>[r.n,r.v,r.s??'',r.e??'',r.se??'',isFinite(r.z)?r.z:'',isFinite(r.chi)?r.chi:'',r.nd??'',isFinite(r.p)?r.p:''])].map(a=>a.join(sep)).join('\n')}
+/* ---------- EVENTI ---------- */
+const $nav=document.getElementById('nav'),$app=document.getElementById('app');function $(s){return document.querySelector(s)}
+document.addEventListener('input',e=>{const t=e.target,d=t.dataset;
+if(d.p){st[d.id].p[d.p]=d.p=='o'?t.checked:t.value}else if(d.i!==undefined){st[d.id].rows[d.i][d.j]=t.value}
+else if(d.ge){st[d.ge=='e'?'ge':'gse']=t.value}else if(d.gt!==undefined){st.gr[d.gt].txt=t.value}else if(d.gn!==undefined){st.gr[d.gn].name=t.value}
+else if(d.f){st.F[d.f]=t.value;delete comp[d.f]}else return;save();calc()});
+document.addEventListener('paste',e=>{const t=e.target,d=t.dataset;if(d.i===undefined)return;e.preventDefault();const lines=e.clipboardData.getData('text').trim().split(/\r?\n/).map(l=>l.split(/\t|;/));
+const rows=st[d.id].rows,nc=rows[0].length;lines.forEach((l,k)=>{const i=+d.i+k;while(rows.length<=i)rows.push(Array(nc).fill(''));l.forEach((v,q)=>{if(+d.j+q<nc)rows[i][+d.j+q]=v.trim()})});save();$('#tb-'+d.id).innerHTML=rows.map((_,i)=>rowH(d.id,i)).join('');calc()});
+document.addEventListener('click',e=>{const t=e.target,d=t.dataset;
+if(d.tab&&t.tagName=='BUTTON'){tab=d.tab;vis()}else if(d.add){const r=st[d.add].rows;r.push(r[0].map(()=>''));save();render()}
+else if(d.clr){if(confirm('Svuotare la tabella?')){st[d.clr].rows=st[d.clr].rows.map(r=>r.map(()=>''));save();render()}}
+else if(d.gd!==undefined){st.gr.splice(d.gd,1);if(!st.gr.length)st.gr.push({name:'Gruppo 1',txt:''});save();renderG();calc()}
+else if(t.id=='addg'){st.gr.push({name:'Gruppo '+(st.gr.length+1),txt:''});save();renderG();calc()}
+else if(t.id=='rf'){st.F={...DF};for(const k in comp)delete comp[k];save();renderF();calc()}
+else if(t.id=='cp'){navigator.clipboard.writeText(tsv('\t'))}
+else if(t.id=='dl'||t.id=='sj'){const j=t.id=='sj',b=new Blob([j?JSON.stringify(st):tsv(';')],{type:'text/plain'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=j?'p2.json':'p2_risultati.csv';a.click()}
+else if(t.id=='lj'){const i=document.createElement('input');i.type='file';i.onchange=()=>i.files[0].text().then(x=>{st=Object.assign(init(),JSON.parse(x));for(const k in comp)delete comp[k];save();render()});i.click()}
+else if(t.id=='rst'){if(confirm('Cancellare tutti i dati?')){st=init();for(const k in comp)delete comp[k];save();render()}}});
+render();
+</script></body></html>
